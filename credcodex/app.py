@@ -5,21 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
-from pathlib import Path
 import time
 
 from credcodex import __version__
 from credcodex.auth_launcher import ReauthGate, launch_codex_login
 from credcodex.config import (
     APP_NAME,
-    LOG_PATH,
     MENU_OPEN_STALE_SEC,
-    NOTIFICATION_CHECK_INTERVAL_SEC,
     REAUTH_NOTIFICATION_LOCK,
     RESET_NOTIFICATION_LOCK,
     clamp_reauth_cooldown,
     load_config,
 )
+from credcodex.icon_assets import menu_bar_icon_path, runtime_icon_path
 from credcodex.limit_providers import CompositeLimitProvider
 from credcodex.models import FailureCategory, LimitInfo, ProviderState
 from credcodex.notifications import (
@@ -44,15 +42,6 @@ except Exception:  # pragma: no cover - exercised only on non-macOS test paths.
     NSImage = None
     NSObject = object
     NSProcessInfo = None
-
-
-def _runtime_icon_path() -> Path | None:
-    """Return the runtime icon when running inside the .app bundle."""
-    bundle_path = Path(__file__).resolve().parents[1] / "dist" / f"{APP_NAME}.app"
-    candidate = bundle_path / "Contents" / "Resources" / "AppIconRuntime.png"
-    if candidate.exists():
-        return candidate
-    return None
 
 
 def format_relative_countdown(target: datetime | None, now: datetime | None = None) -> str:
@@ -205,11 +194,11 @@ else:
                 info["CFBundleName"] = APP_NAME
                 info["CFBundleDisplayName"] = APP_NAME
 
-            status_icon = _runtime_icon_path()
+            status_icon = menu_bar_icon_path()
             super().__init__(APP_NAME, title=None, icon=str(status_icon) if status_icon else None, quit_button=None)
 
             if NSApplication is not None and NSProcessInfo is not None:
-                dock_icon = _runtime_icon_path()
+                dock_icon = runtime_icon_path()
                 if dock_icon is not None and dock_icon.exists():
                     ns_icon = NSImage.alloc().initWithContentsOfFile_(str(dock_icon))
                     if ns_icon:

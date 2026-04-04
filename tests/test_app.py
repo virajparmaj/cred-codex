@@ -122,7 +122,11 @@ class TestScriptSanity:
         uninstall_text = (repo_root / "uninstall.sh").read_text()
 
         assert "CredCodex" in build_text
+        assert "AppIconRuntime.png" in build_text
+        assert "TARGET_ALPHA_BOUNDS_RATIO" in build_text
+        assert "DOCK_ICON_BOUNDS_RATIO" in build_text
         assert "iconutil" in build_text
+        assert "sips" in build_text
         assert "cc" in build_text
         assert "launchctl" in install_text
         assert "ditto" in install_text

@@ -8,6 +8,7 @@ from typing import Callable
 
 from credcodex import __version__
 from credcodex.config import DEFAULT_CONFIG, LOG_PATH, save_config, sanitize_config
+from credcodex.icon_assets import runtime_icon_path
 
 try:
     import objc
@@ -16,6 +17,7 @@ try:
         NSButton,
         NSClosableWindowMask,
         NSFont,
+        NSImage,
         NSLeftTextAlignment,
         NSMakeRect,
         NSMiniaturizableWindowMask,
@@ -28,6 +30,7 @@ try:
 except Exception:  # pragma: no cover - exercised only on non-macOS test paths.
     objc = None
     NSObject = object
+    NSImage = None
     NSWindow = None
 
 
@@ -119,6 +122,11 @@ else:
             )
             self._window.setTitle_("CredCodex Settings")
             self._window.setReleasedWhenClosed_(False)
+            icon_path = runtime_icon_path()
+            if NSImage is not None and icon_path.exists():
+                mini_icon = NSImage.alloc().initWithContentsOfFile_(str(icon_path))
+                if mini_icon:
+                    self._window.setMiniwindowImage_(mini_icon)
 
             delegate = _SettingsDelegate.alloc().init()
             delegate.window_ref = self

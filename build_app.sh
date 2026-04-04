@@ -10,6 +10,14 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ICONSET_DIR="$RESOURCES_DIR/AppIcon.iconset"
 RUNTIME_ICON_NAME="AppIconRuntime.png"
+ASSETS_DIR="$SCRIPT_DIR/assets"
+ICON_ASSETS_DIR="$ASSETS_DIR/icons/macos"
+ICON_SOURCE="$ICON_ASSETS_DIR/credcodex_icon_1024.png"
+MENU_BAR_ICON="$ASSETS_DIR/credcodex_menubar.png"
+MENU_BAR_ICON_2X="$ASSETS_DIR/credcodex_menubar@2x.png"
+MENU_BAR_ICON_SOURCE="$ASSETS_DIR/credcodex_menubar_source.png"
+TARGET_ALPHA_BOUNDS_RATIO="0.82"
+DOCK_ICON_BOUNDS_RATIO="0.72"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -18,87 +26,101 @@ require_cmd() {
   fi
 }
 
+require_file() {
+  if [[ ! -f "$1" ]]; then
+    echo "Missing required asset: $1" >&2
+    exit 1
+  fi
+}
+
 for tool in python3 sips iconutil cc plutil; do
   require_cmd "$tool"
 done
 
-VERSION="$(python3 - <<'PY'
+for asset in "$ICON_SOURCE" "$MENU_BAR_ICON" "$MENU_BAR_ICON_2X" "$MENU_BAR_ICON_SOURCE"; do
+  require_file "$asset"
+done
+
+VERSION="$(python3 - "$SCRIPT_DIR/credcodex/__init__.py" <<'PY'
 from pathlib import Path
+import sys
+
 ns = {}
-exec(Path("credcodex/__init__.py").read_text(), ns)
+exec(Path(sys.argv[1]).read_text(), ns)
 print(ns["__version__"])
 PY
 )"
 
 mkdir -p "$SCRIPT_DIR/dist"
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$ICONSET_DIR"
 
 WORK_DIR="$(mktemp -d "$SCRIPT_DIR/dist/.icon-work.XXXXXX")"
 trap 'rm -rf "$WORK_DIR"' EXIT
-BASE_PPM="$WORK_DIR/base.ppm"
-BASE_PNG="$WORK_DIR/base.png"
 
-python3 - "$BASE_PPM" <<'PY'
-from math import sqrt
-from pathlib import Path
+scaled_bounds_size() {
+  python3 - "$1" "$2" <<'PY'
 import sys
 
-size = 1024
-path = Path(sys.argv[1])
-center = size / 2
-
-with path.open("w") as handle:
-    handle.write(f"P3\n{size} {size}\n255\n")
-    for y in range(size):
-        row = []
-        for x in range(size):
-            dx = x - center
-            dy = y - center
-            dist = sqrt(dx * dx + dy * dy) / center
-            base_r = max(24, int(255 - (dist * 140)))
-            base_g = max(38, int(214 - (dist * 110)))
-            base_b = max(56, int(162 - (dist * 70)))
-            if dist < 0.55:
-                base_r = min(255, base_r + 18)
-                base_g = min(255, base_g + 24)
-                base_b = min(255, base_b + 50)
-            if abs(dx) < 130 and abs(dy) < 250:
-                base_r = 250
-                base_g = 250
-                base_b = 252
-            if abs(dx) < 240 and abs(dy) < 70:
-                base_r = 250
-                base_g = 250
-                base_b = 252
-            row.append(f"{base_r} {base_g} {base_b}")
-        handle.write(" ".join(row))
-        handle.write("\n")
+size = int(sys.argv[1])
+ratio = float(sys.argv[2])
+print(max(1, int(round(size * ratio))))
 PY
-
-sips -s format png "$BASE_PPM" --out "$BASE_PNG" >/dev/null
-mkdir -p "$ICONSET_DIR"
-
-copy_icon() {
-  local size="$1"
-  local name="$2"
-  sips -z "$size" "$size" "$BASE_PNG" --out "$WORK_DIR/$name" >/dev/null
-  cp "$WORK_DIR/$name" "$ICONSET_DIR/$name"
 }
 
-copy_icon 16 "icon_16x16.png"
-copy_icon 32 "icon_16x16@2x.png"
-copy_icon 32 "icon_32x32.png"
-copy_icon 64 "icon_32x32@2x.png"
-copy_icon 128 "icon_128x128.png"
-copy_icon 256 "icon_128x128@2x.png"
-copy_icon 256 "icon_256x256.png"
-copy_icon 512 "icon_256x256@2x.png"
-copy_icon 512 "icon_512x512.png"
-copy_icon 1024 "icon_512x512@2x.png"
+normalize_square() {
+  python3 - "$1" "$2" "$3" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+
+source = Path(sys.argv[1])
+destination = Path(sys.argv[2])
+canvas_size = sys.argv[3]
+destination.parent.mkdir(parents=True, exist_ok=True)
+subprocess.run(
+    ["sips", "--padToHeightWidth", canvas_size, canvas_size, str(source), "--out", str(destination)],
+    check=True,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+)
+PY
+}
+
+render_variant() {
+  local size="$1"
+  local ratio="$2"
+  local prefix="$3"
+  local scaled_size
+  local scaled_path
+  local output_path
+
+  scaled_size="$(scaled_bounds_size "$size" "$ratio")"
+  scaled_path="$WORK_DIR/${prefix}_${size}_scaled.png"
+  output_path="$WORK_DIR/${prefix}_${size}.png"
+
+  sips -Z "$scaled_size" "$ICON_SOURCE" --out "$scaled_path" >/dev/null
+  normalize_square "$scaled_path" "$output_path" "$size"
+}
+
+for size in 16 32 64 128 256 512 1024; do
+  render_variant "$size" "$TARGET_ALPHA_BOUNDS_RATIO" "finder"
+  render_variant "$size" "$DOCK_ICON_BOUNDS_RATIO" "dock"
+done
+
+cp "$WORK_DIR/finder_16.png" "$ICONSET_DIR/icon_16x16.png"
+cp "$WORK_DIR/finder_32.png" "$ICONSET_DIR/icon_16x16@2x.png"
+cp "$WORK_DIR/finder_32.png" "$ICONSET_DIR/icon_32x32.png"
+cp "$WORK_DIR/finder_64.png" "$ICONSET_DIR/icon_32x32@2x.png"
+cp "$WORK_DIR/finder_128.png" "$ICONSET_DIR/icon_128x128.png"
+cp "$WORK_DIR/finder_256.png" "$ICONSET_DIR/icon_128x128@2x.png"
+cp "$WORK_DIR/finder_256.png" "$ICONSET_DIR/icon_256x256.png"
+cp "$WORK_DIR/finder_512.png" "$ICONSET_DIR/icon_256x256@2x.png"
+cp "$WORK_DIR/finder_512.png" "$ICONSET_DIR/icon_512x512.png"
+cp "$WORK_DIR/finder_1024.png" "$ICONSET_DIR/icon_512x512@2x.png"
 
 iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AppIcon.icns"
-cp "$WORK_DIR/icon_512x512.png" "$RESOURCES_DIR/$RUNTIME_ICON_NAME"
+cp "$WORK_DIR/dock_512.png" "$RESOURCES_DIR/$RUNTIME_ICON_NAME"
 rm -rf "$ICONSET_DIR"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
