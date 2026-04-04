@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "credcodex"
+dynamic = ["version"]
+description = "Local macOS menu bar app for monitoring Codex usage limits"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "rumps>=0.4.0",
+  "pyobjc-core>=10.3",
+  "pyobjc-framework-Cocoa>=10.3",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "credcodex.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["credcodex*"]
+
+[project.scripts]
+credcodex = "credcodex.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,81 @@
+# CredCodex
+
+CredCodex is a macOS-only, local-first menu bar app for monitoring Codex usage limits at a glance.
+
+It does not require a server, database, or web dashboard. Runtime state lives under `~/.credcodex/`, including config, logs, snapshots, and notification locks.
+
+## Provider Source
+
+CredCodex uses a hybrid local-first provider pipeline:
+
+- Live refreshes use the official Codex ChatGPT usage flow, backed by the same local Codex credentials used by the official client.
+- Auth is loaded from local Codex state in `~/.codex/auth.json` or the macOS keychain entry used by Codex (`Codex Auth`).
+- When live reads fail, CredCodex falls back to in-memory cache, disk snapshots, and recent local Codex session telemetry from `~/.codex/sessions/`.
+
+This keeps the app useful when the live endpoint is temporarily unavailable while still using the official Codex limit source when possible.
+
+## What It Shows
+
+CredCodex always tries to show:
+
+- current utilization percentage
+- reset timing for the primary limit window
+
+It shows optional sections only when the upstream source exposes them:
+
+- plan metadata
+- weekly usage/reset details
+- credits metadata
+- extra usage fields
+
+If a field does not exist upstream, CredCodex leaves it hidden instead of fabricating data.
+
+## Re-authentication
+
+Manual and automatic re-auth flows use the documented local Codex login path:
+
+- `codex login` is launched in Terminal for local sign-in
+- if the `codex` CLI is unavailable, CredCodex falls back to opening the official Codex auth docs
+
+## Install
+
+```bash
+bash install.sh
+```
+
+This will:
+
+- create a local virtual environment in `./venv`
+- install the package
+- build `CredCodex.app`
+- copy it to `~/Applications/CredCodex.app`
+- register a `launchd` login item
+- launch the app
+
+## Run in Development
+
+```bash
+python3 -m venv venv
+./venv/bin/pip install -e .
+./venv/bin/python -m credcodex
+```
+
+## Test
+
+```bash
+pytest
+```
+
+## Uninstall
+
+```bash
+bash uninstall.sh
+```
+
+This removes the app bundle and login item, but leaves local data in `~/.credcodex/` so you can inspect logs or keep settings.
+
+## Current Caveats
+
+- Live Codex limit monitoring requires ChatGPT-authenticated Codex usage. API-key-only auth does not expose the same Codex usage limits and is surfaced as an unsupported auth mode instead of being guessed.
+- The upstream Codex source can expose windows that are not weekly; CredCodex only labels a secondary window as weekly when the duration is actually weekly-like.
+- Credits and extra-usage concepts are kept separate. If the upstream source exposes credits but not the prompt’s exact extra-usage fields, CredCodex shows credits and leaves extra usage hidden.
