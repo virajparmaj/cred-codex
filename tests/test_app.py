@@ -119,6 +119,7 @@ class TestScriptSanity:
     def test_scripts_reference_expected_tools(self, repo_root: Path):
         build_text = (repo_root / "build_app.sh").read_text()
         install_text = (repo_root / "install.sh").read_text()
+        menubar_text = (repo_root / "scripts" / "generate_menubar_icons.sh").read_text()
         uninstall_text = (repo_root / "uninstall.sh").read_text()
 
         assert "CredCodex" in build_text
@@ -128,6 +129,9 @@ class TestScriptSanity:
         assert "iconutil" in build_text
         assert "sips" in build_text
         assert "cc" in build_text
+        assert "credcodex_menubar_source.png" in menubar_text
+        assert "sips -z 22 22" in menubar_text
+        assert "sips -z 44 44" in menubar_text
         assert "launchctl" in install_text
         assert "ditto" in install_text
         assert "osascript" in uninstall_text

@@ -29,6 +29,12 @@ def test_menu_bar_icon_path_returns_checked_in_asset(repo_root: Path):
     assert path.exists()
 
 
+def test_menu_bar_icon_2x_path_returns_checked_in_asset(repo_root: Path):
+    path = icon_assets.menu_bar_icon_2x_path()
+    assert path == repo_root / "assets" / "credcodex_menubar@2x.png"
+    assert path.exists()
+
+
 def test_runtime_icon_prefers_bundle_runtime_png(tmp_path, monkeypatch):
     resource_dir = tmp_path / "Resources"
     resource_dir.mkdir()

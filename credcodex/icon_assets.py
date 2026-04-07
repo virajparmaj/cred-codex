@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover - exercised only on non-macOS test paths.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ASSETS_DIR = REPO_ROOT / "assets"
 MENU_BAR_ICON = ASSETS_DIR / "credcodex_menubar.png"
+MENU_BAR_ICON_2X = ASSETS_DIR / "credcodex_menubar@2x.png"
 RUNTIME_FALLBACK_ICON = ASSETS_DIR / "icons" / "macos" / "credcodex_icon_512.png"
 DIST_RESOURCES_DIR = REPO_ROOT / "dist" / f"{APP_NAME}.app" / "Contents" / "Resources"
 
@@ -49,6 +50,11 @@ def _resource_candidate(name: str) -> Path | None:
 def menu_bar_icon_path() -> Path:
     """Return the checked-in menu bar icon asset."""
     return MENU_BAR_ICON
+
+
+def menu_bar_icon_2x_path() -> Path:
+    """Return the checked-in Retina menu bar icon asset."""
+    return MENU_BAR_ICON_2X
 
 
 def runtime_icon_path() -> Path:

@@ -17,7 +17,7 @@ from credcodex.config import (
     clamp_reauth_cooldown,
     load_config,
 )
-from credcodex.icon_assets import menu_bar_icon_path, runtime_icon_path
+from credcodex.icon_assets import menu_bar_icon_2x_path, menu_bar_icon_path, runtime_icon_path
 from credcodex.limit_providers import CompositeLimitProvider
 from credcodex.models import FailureCategory, LimitInfo, ProviderState
 from credcodex.notifications import (
@@ -28,6 +28,7 @@ from credcodex.notifications import (
 )
 
 logger = logging.getLogger("credcodex.app")
+MENU_BAR_ICON_LOGICAL_SIZE = (22.0, 22.0)
 
 try:
     import objc
@@ -195,7 +196,14 @@ else:
                 info["CFBundleDisplayName"] = APP_NAME
 
             status_icon = menu_bar_icon_path()
-            super().__init__(APP_NAME, title=None, icon=str(status_icon) if status_icon else None, quit_button=None)
+            super().__init__(
+                APP_NAME,
+                title=None,
+                icon=str(status_icon) if status_icon else None,
+                template=False,
+                quit_button=None,
+            )
+            self._apply_menu_bar_status_icon()
 
             if NSApplication is not None and NSProcessInfo is not None:
                 dock_icon = runtime_icon_path()
@@ -257,6 +265,50 @@ else:
             if self.config.get("auto_refresh", True):
                 self._refresh_timer.start()
             logger.info("CredCodex started (v%s)", __version__)
+
+        def _load_nsimage(self, path) -> NSImage | None:
+            if path is None or not path.exists():
+                return None
+            image = NSImage.alloc().initWithContentsOfFile_(str(path))
+            if not image:
+                return None
+            image.setSize_(MENU_BAR_ICON_LOGICAL_SIZE)
+            return image
+
+        def _compose_menu_bar_icon(self) -> NSImage | None:
+            base_image = self._load_nsimage(menu_bar_icon_path())
+            if base_image is None:
+                return None
+            base_image.setTemplate_(False)
+
+            retina_image = self._load_nsimage(menu_bar_icon_2x_path())
+            if retina_image is None:
+                return base_image
+
+            combined = NSImage.alloc().initWithSize_(MENU_BAR_ICON_LOGICAL_SIZE)
+            for image in (base_image, retina_image):
+                for representation in image.representations():
+                    rep_copy = representation.copy()
+                    if hasattr(rep_copy, "setSize_"):
+                        rep_copy.setSize_(MENU_BAR_ICON_LOGICAL_SIZE)
+                    combined.addRepresentation_(rep_copy)
+
+            if len(combined.representations()) == 0:
+                return base_image
+
+            combined.setSize_(MENU_BAR_ICON_LOGICAL_SIZE)
+            combined.setTemplate_(False)
+            return combined
+
+        def _apply_menu_bar_status_icon(self) -> None:
+            status_image = self._compose_menu_bar_icon()
+            if status_image is None:
+                return
+            self._icon_nsimage = status_image
+            try:
+                self._nsapp.setStatusBarIcon()
+            except AttributeError:
+                pass
 
         def _set_info_visibility(self, sections: MenuSections) -> None:
             self._plan_item._menuitem.setHidden_(sections.plan_title is None)

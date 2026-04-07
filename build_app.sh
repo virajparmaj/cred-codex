@@ -33,6 +33,18 @@ require_file() {
   fi
 }
 
+restore_fallback_icns() {
+  local fallback_ref="HEAD:dist/$APP_NAME.app/Contents/Resources/AppIcon.icns"
+
+  if command -v git >/dev/null 2>&1 && git cat-file -e "$fallback_ref" 2>/dev/null; then
+    git show "$fallback_ref" > "$RESOURCES_DIR/AppIcon.icns"
+    return 0
+  fi
+
+  echo "iconutil failed and no fallback AppIcon.icns is available in git." >&2
+  return 1
+}
+
 for tool in python3 sips iconutil cc plutil; do
   require_cmd "$tool"
 done
@@ -119,7 +131,9 @@ cp "$WORK_DIR/finder_512.png" "$ICONSET_DIR/icon_256x256@2x.png"
 cp "$WORK_DIR/finder_512.png" "$ICONSET_DIR/icon_512x512.png"
 cp "$WORK_DIR/finder_1024.png" "$ICONSET_DIR/icon_512x512@2x.png"
 
-iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AppIcon.icns"
+if ! iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AppIcon.icns"; then
+  restore_fallback_icns
+fi
 cp "$WORK_DIR/dock_512.png" "$RESOURCES_DIR/$RUNTIME_ICON_NAME"
 rm -rf "$ICONSET_DIR"
 
