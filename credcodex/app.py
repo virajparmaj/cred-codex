@@ -33,12 +33,19 @@ MENU_BAR_ICON_LOGICAL_SIZE = (22.0, 22.0)
 try:
     import objc
     import rumps
-    from AppKit import NSApplication, NSBundle, NSImage, NSObject
+    from AppKit import (
+        NSApplication,
+        NSApplicationActivationPolicyAccessory,
+        NSBundle,
+        NSImage,
+        NSObject,
+    )
     from Foundation import NSProcessInfo
 except Exception:  # pragma: no cover - exercised only on non-macOS test paths.
     objc = None
     rumps = None
     NSApplication = None
+    NSApplicationActivationPolicyAccessory = None
     NSBundle = None
     NSImage = None
     NSObject = object
@@ -206,11 +213,10 @@ else:
             self._apply_menu_bar_status_icon()
 
             if NSApplication is not None and NSProcessInfo is not None:
-                dock_icon = runtime_icon_path()
-                if dock_icon is not None and dock_icon.exists():
-                    ns_icon = NSImage.alloc().initWithContentsOfFile_(str(dock_icon))
-                    if ns_icon:
-                        NSApplication.sharedApplication().setApplicationIconImage_(ns_icon)
+                if NSApplicationActivationPolicyAccessory is not None:
+                    NSApplication.sharedApplication().setActivationPolicy_(
+                        NSApplicationActivationPolicyAccessory
+                    )
                 NSProcessInfo.processInfo().setValue_forKey_(APP_NAME, "processName")
 
             self.config = load_config()
