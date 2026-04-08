@@ -1,2 +1,0 @@
-[console_scripts]
-credcodex = credcodex.__main__:main
