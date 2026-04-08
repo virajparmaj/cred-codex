@@ -91,7 +91,9 @@ def make_bar(percent_used: float | None, width: int = 15) -> str:
 def derive_title(limit: LimitInfo, now: datetime | None = None) -> str:
     """Return the short menu bar title."""
     if limit.utilization_pct is not None and limit.resets_at is not None:
-        return f"{limit.utilization_pct:.0f}% | {format_relative_countdown(limit.resets_at, now=now)}"
+        if limit.utilization_pct > 0:
+            return f"{limit.utilization_pct:.0f}% | {format_relative_countdown(limit.resets_at, now=now)}"
+        return f"{limit.utilization_pct:.0f}%"
     if limit.utilization_pct is not None:
         return f"{limit.utilization_pct:.0f}%"
     if limit.failure_category in {FailureCategory.AUTH_EXPIRED, FailureCategory.UNSUPPORTED_AUTH_MODE}:

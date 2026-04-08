@@ -58,6 +58,11 @@ class TestTitleRendering:
         limit = _limit(state=ProviderState.STALE, utilization_pct=None)
         assert derive_title(limit) == "⏸ stale"
 
+    def test_zero_utilization_hides_countdown(self):
+        now = dt.datetime(2026, 4, 3, 12, 0, tzinfo=dt.timezone.utc)
+        limit = _limit(utilization_pct=0.0, resets_at=now + dt.timedelta(hours=5))
+        assert derive_title(limit, now=now) == "0%"
+
 
 class TestMenuSections:
     def test_optional_sections_hide_cleanly(self):
