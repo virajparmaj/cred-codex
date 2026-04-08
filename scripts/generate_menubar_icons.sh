@@ -2,9 +2,12 @@
 
 set -euo pipefail
 
-SOURCE="/Users/veerr_89/Work/tools/cred-codex/assets/credcodex_menubar_source.png"
-OUTPUT_1X="/Users/veerr_89/Work/tools/cred-codex/assets/credcodex_menubar.png"
-OUTPUT_2X="/Users/veerr_89/Work/tools/cred-codex/assets/credcodex_menubar@2x.png"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+SOURCE="$REPO_ROOT/assets/credcodex_menubar_source.png"
+OUTPUT_1X="$REPO_ROOT/assets/credcodex_menubar.png"
+OUTPUT_2X="$REPO_ROOT/assets/credcodex_menubar@2x.png"
 
 if [[ ! -f "$SOURCE" ]]; then
   echo "Missing source asset: $SOURCE" >&2
