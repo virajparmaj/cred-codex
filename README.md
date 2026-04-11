@@ -4,55 +4,66 @@
   <img src="assets/credcodex_logo.png" alt="CredCodex" width="120">
 </p>
 
-A macOS menu bar app that keeps your Codex usage limits visible at a glance — no browser tab required.
+CredCodex is a local macOS menu bar app that keeps your Codex usage limits, reset timers, and auth state visible without living in a browser tab.
 
----
+## App Preview
 
-## Features
+<!-- Screenshots pending -->
+<table>
+  <tr>
+    <td><sub>Fresh screenshots are pending for the current build.</sub></td>
+  </tr>
+</table>
 
-- **Live usage in the menu bar** — shows your current utilization percentage and a countdown to the next reset window directly in the status bar.
-- **Dropdown detail rows** — when your account exposes them, the menu shows plan name, weekly usage with a progress bar, weekly reset time, credits balance, and extra usage.
-- **Auto-refresh** — polls the Codex usage endpoint on a configurable interval (default: every 60 seconds).
-- **Smart fallback** — when the live endpoint is unavailable, CredCodex falls back to an in-memory cache, a local disk snapshot, and recent Codex session telemetry so the display stays useful.
-- **Auth notifications** — detects expired auth and either triggers re-authentication automatically or prompts you. Launches `codex login` in Terminal; falls back to the Codex auth docs page if the CLI is not installed.
-- **System notifications** — alerts you when your limit window resets and when a re-auth attempt completes.
-- **Settings window** — toggle auto-refresh, set the refresh interval, toggle auto re-authenticate, adjust the cooldown, and open the log file — all from a native macOS panel.
-- **Local-first, no server** — all state lives under `~/.credcodex/`. Nothing is sent to a third-party service.
+## What You Can Do With It
 
-> **Note:** Live limit monitoring requires a ChatGPT-authenticated Codex account. API-key-only auth does not expose the same usage data and is shown as an unsupported auth mode rather than guessed.
+- See your current usage at a glance in the menu bar, including the current utilization percentage and time remaining until the next reset when that data is available.
+- Open the dropdown for richer account details such as your plan, weekly usage progress, weekly reset time, credits balance, and extra usage when your account exposes them.
+- Refresh on a timer or on demand from the menu, with settings for auto-refresh, refresh interval, auto re-authentication, and re-auth cooldown.
+- Recover more gracefully when live usage data is unavailable by falling back to recent saved data and local Codex session telemetry instead of going blank immediately.
+- Re-authenticate quickly from the menu when your Codex session expires. CredCodex opens `codex login` in Terminal when it can, and falls back to the official auth docs when the CLI is unavailable.
+- Get native macOS notifications when a limit window appears to reset and when CredCodex completes a re-auth launch attempt.
+- Open logs, keep settings local, and run the app without sending data through a separate hosted service.
 
----
+> Live monitoring depends on a ChatGPT-authenticated Codex session. API-key-only auth does not expose the same limit data, so CredCodex reports that mode as unsupported instead of guessing.
 
-## Install
+## Install / Getting Started
 
-Requires macOS and Python 3.11 or later.
+CredCodex is for macOS users who already use Codex locally and want a lightweight menu bar view of their current limit state.
+
+Requires:
+
+- macOS
+- Python 3.11 or later
+
+Install with:
 
 ```bash
 bash install.sh
 ```
 
-This will:
+The installer will:
 
 1. Create a local virtual environment in `./venv`
-2. Install the package
+2. Install CredCodex into that environment
 3. Build `CredCodex.app`
-4. Copy it to `~/Applications/CredCodex.app`
-5. Register a `launchd` login item so it starts on login
+4. Copy the app to `~/Applications/CredCodex.app`
+5. Register a `launchd` login item
 6. Launch the app immediately
 
-After install, CredCodex appears in your menu bar. Open the menu and choose **Settings** to adjust the refresh interval or re-auth behavior.
+After install, CredCodex appears in the menu bar. Open the menu to refresh manually, trigger re-authentication, or open **Settings**.
 
-**Uninstall:**
+Uninstall with:
 
 ```bash
 bash uninstall.sh
 ```
 
-Removes the app bundle and login item. Local data under `~/.credcodex/` is kept so you can inspect logs before deleting manually.
+That removes the app bundle and login item. Local data in `~/.credcodex/` is left in place so you can inspect logs or delete it yourself later.
 
----
+## Developer Install / Local Setup
 
-## Developer Setup
+Clone the repo and run the app locally:
 
 ```bash
 git clone <repo-url>
@@ -63,17 +74,24 @@ python3 -m venv venv
 ./venv/bin/python -m credcodex
 ```
 
-**Run tests:**
+Install test dependencies and run tests:
 
 ```bash
 ./venv/bin/pip install -r requirements-dev.txt
 pytest
 ```
 
-**Build the app bundle** (requires macOS):
+Build the macOS app bundle:
 
 ```bash
 bash build_app.sh
 ```
 
-Local runtime data is written to `~/.credcodex/` — config, logs, snapshots, and notification locks.
+Helpful local paths:
+
+- Runtime data: `~/.credcodex/`
+- Config: `~/.credcodex/config.json`
+- Logs: `~/.credcodex/credcodex.log`
+- Snapshot cache: `~/.credcodex/last_limit_snapshot.json`
+
+The app is macOS-only and depends on native tooling used by the install and build scripts, including `launchctl`, `osascript`, `open`, `sips`, `iconutil`, `plutil`, and `cc`.
