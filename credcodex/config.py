@@ -18,6 +18,7 @@ APP_DIR = Path.home() / ".credcodex"
 CONFIG_PATH = APP_DIR / "config.json"
 LOG_PATH = APP_DIR / "credcodex.log"
 SNAPSHOT_PATH = APP_DIR / "last_limit_snapshot.json"
+KEEPALIVE_STATE_PATH = APP_DIR / "keepalive_state.json"
 PID_PATH = APP_DIR / "monitor.pid"
 NOTIFICATION_DIR = APP_DIR / "notifications"
 RESET_NOTIFICATION_LOCK = NOTIFICATION_DIR / "last_reset_available.txt"
@@ -36,6 +37,9 @@ DEFAULT_CONFIG: dict[str, object] = {
     "refresh_interval_sec": DEFAULT_REFRESH_INTERVAL_SEC,
     "auto_reauth_enabled": True,
     "auto_reauth_cooldown_sec": DEFAULT_AUTO_REAUTH_COOLDOWN_SEC,
+    "keepalive_enabled": True,
+    "keepalive_wake_system_enabled": False,
+    "codex_bin": None,
 }
 
 REFRESH_INTERVAL_MIN_SEC = 15
@@ -77,6 +81,17 @@ def clamp_reauth_cooldown(value: object) -> int:
     return parsed
 
 
+def sanitize_codex_bin(value: object) -> str | None:
+    """Normalize the optional `codex` binary override path.
+
+    Returns the trimmed string when a non-empty path is provided, else None
+    so the scheduler falls back to PATH-based auto-discovery.
+    """
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
 def sanitize_config(raw: dict[str, object] | None) -> dict[str, object]:
     """Backfill defaults and normalize unsafe values."""
     cfg = DEFAULT_CONFIG.copy()
@@ -86,6 +101,9 @@ def sanitize_config(raw: dict[str, object] | None) -> dict[str, object]:
     cfg["refresh_interval_sec"] = clamp_refresh_interval(cfg.get("refresh_interval_sec"))
     cfg["auto_reauth_enabled"] = bool(cfg.get("auto_reauth_enabled", True))
     cfg["auto_reauth_cooldown_sec"] = clamp_reauth_cooldown(cfg.get("auto_reauth_cooldown_sec"))
+    cfg["keepalive_enabled"] = bool(cfg.get("keepalive_enabled", True))
+    cfg["keepalive_wake_system_enabled"] = bool(cfg.get("keepalive_wake_system_enabled", False))
+    cfg["codex_bin"] = sanitize_codex_bin(cfg.get("codex_bin"))
     return cfg
 
 

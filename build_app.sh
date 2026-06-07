@@ -165,27 +165,75 @@ PLIST
 
 plutil -lint "$CONTENTS_DIR/Info.plist" >/dev/null
 
-cat > "$MACOS_DIR/launcher.c" <<'CSRC'
-#include <libgen.h>
-#include <mach-o/dyld.h>
+# Resolve Python framework build settings from the venv interpreter. We embed
+# Python (link against the framework + Py_InitializeFromConfig) rather than
+# execv-ing to it, so the launched process identity stays "CredCodex" instead of
+# "Python". macOS Tahoe's menu bar permission system keys off that identity, so
+# embedding is what lets the NSStatusItem register and appear in Control Center's
+# "Allow in the Menu Bar" list.
+VENV_PY="$SCRIPT_DIR/venv/bin/python"
+if [[ ! -x "$VENV_PY" ]]; then
+  echo "Missing venv interpreter: $VENV_PY (run install.sh first)" >&2
+  exit 1
+fi
+
+read_py_config() {
+  "$VENV_PY" - <<'PY'
+import sys
+import sysconfig
+
+# base_prefix from sys (NOT sysconfig.get_config_var('base_prefix'), which
+# returns the venv path and breaks stdlib/encodings import when used as home).
+print(sysconfig.get_path("include"))
+print(sysconfig.get_config_var("LIBDIR"))
+print(sysconfig.get_config_var("VERSION"))
+print(sys.base_prefix)
+PY
+}
+
+{
+  read -r PYTHON_INCLUDE
+  read -r PYTHON_LIBDIR
+  read -r VENV_PY_VERSION
+  read -r PYTHON_FW_PREFIX
+} < <(read_py_config)
+
+PYTHON_LDLIB="-lpython${VENV_PY_VERSION}"
+
+for var in PYTHON_INCLUDE PYTHON_LIBDIR VENV_PY_VERSION PYTHON_FW_PREFIX; do
+  if [[ -z "${!var}" ]]; then
+    echo "Failed to resolve $var from venv interpreter" >&2
+    exit 1
+  fi
+done
+
+LAUNCHER_SRC="$MACOS_DIR/launcher.c"
+
+cat > "$LAUNCHER_SRC" <<'CSRC'
+#include <Python.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
+/* Embedded-Python launcher. The process identity must remain the app binary
+ * (not "Python") for macOS Tahoe's menu bar permission system to register the
+ * app's NSStatusItem, so we link the Python framework and initialize in-process
+ * instead of execv-ing to the venv interpreter. */
+
+#define APP_NAME "CredCodex"
+#define PY_FW_PREFIX "@@PY_FW_PREFIX@@"
+#define VENV_PY_VERSION "@@VENV_PY_VERSION@@"
+
+static int fail_status(PyConfig *config, PyStatus status) {
+    PyConfig_Clear(config);
+    if (PyStatus_IsExit(status)) {
+        return status.exitcode;
+    }
+    Py_ExitStatusException(status);
+    return 1;
+}
+
 int main(void) {
-    char exe[4096];
-    uint32_t size = sizeof(exe);
-    if (_NSGetExecutablePath(exe, &size) != 0) {
-        fprintf(stderr, "CredCodex: cannot resolve executable path\n");
-        return 1;
-    }
-
-    char *resolved = realpath(exe, NULL);
-    if (!resolved) {
-        perror("realpath");
-        return 1;
-    }
-
     const char *repo = getenv("CREDCODEX_REPO");
     if (!repo) {
         repo = "@@REPO_DIR@@";
@@ -195,21 +243,76 @@ int main(void) {
     snprintf(python_path, sizeof(python_path), "%s/venv/bin/python", repo);
     if (access(python_path, X_OK) != 0) {
         system("osascript -e 'display dialog \"CredCodex could not find its virtual environment. Please rerun install.sh.\" buttons {\"OK\"} default button \"OK\" with icon stop' 2>/dev/null");
-        free(resolved);
         return 1;
     }
 
-    chdir(repo);
-    char *argv[] = {"CredCodex", "-m", "credcodex", NULL};
-    execv(python_path, argv);
-    perror("execv");
-    free(resolved);
-    return 1;
+    if (chdir(repo) != 0) {
+        perror("chdir");
+        return 1;
+    }
+
+    PyStatus status;
+    PyConfig config;
+    PyConfig_InitPythonConfig(&config);
+
+    /* Point home at the BASE Python prefix so the stdlib (encodings, etc.) is
+     * found. Pointing this at the venv breaks stdlib import. */
+    status = PyConfig_SetBytesString(&config, &config.home, PY_FW_PREFIX);
+    if (PyStatus_Exception(status)) {
+        return fail_status(&config, status);
+    }
+
+    /* Keep the process identity as the app, not "python". */
+    status = PyConfig_SetBytesString(&config, &config.program_name, APP_NAME);
+    if (PyStatus_Exception(status)) {
+        return fail_status(&config, status);
+    }
+
+    status = Py_InitializeFromConfig(&config);
+    if (PyStatus_Exception(status)) {
+        return fail_status(&config, status);
+    }
+    PyConfig_Clear(&config);
+
+    /* Prepend the venv site-packages and repo root to sys.path, repoint
+     * sys.prefix/exec_prefix at the venv, and set argv[0] to the app name. */
+    char bootstrap[8192];
+    snprintf(bootstrap, sizeof(bootstrap),
+        "import sys\n"
+        "venv = r'%s/venv'\n"
+        "repo = r'%s'\n"
+        "site_packages = venv + '/lib/python%s/site-packages'\n"
+        "sys.path.insert(0, site_packages)\n"
+        "sys.path.insert(0, repo)\n"
+        "sys.prefix = venv\n"
+        "sys.exec_prefix = venv\n"
+        "sys.argv = ['" APP_NAME "']\n",
+        repo, repo, VENV_PY_VERSION);
+
+    if (PyRun_SimpleString(bootstrap) != 0) {
+        fprintf(stderr, "CredCodex: failed to bootstrap sys.path\n");
+        Py_Finalize();
+        return 1;
+    }
+
+    int rc = PyRun_SimpleString(
+        "from credcodex.__main__ import main\n"
+        "main()\n");
+
+    Py_Finalize();
+    return rc == 0 ? 0 : 1;
 }
 CSRC
 
-sed -i '' "s|@@REPO_DIR@@|$SCRIPT_DIR|g" "$MACOS_DIR/launcher.c"
-cc -O2 -o "$MACOS_DIR/$APP_NAME" "$MACOS_DIR/launcher.c"
-rm "$MACOS_DIR/launcher.c"
+sed -i '' \
+  -e "s|@@REPO_DIR@@|$SCRIPT_DIR|g" \
+  -e "s|@@PY_FW_PREFIX@@|$PYTHON_FW_PREFIX|g" \
+  -e "s|@@VENV_PY_VERSION@@|$VENV_PY_VERSION|g" \
+  "$LAUNCHER_SRC"
+
+cc -O2 -I"$PYTHON_INCLUDE" -L"$PYTHON_LIBDIR" $PYTHON_LDLIB \
+  -framework CoreFoundation -Wl,-rpath,"$PYTHON_FW_PREFIX/lib" \
+  -o "$MACOS_DIR/$APP_NAME" "$LAUNCHER_SRC"
+rm "$LAUNCHER_SRC"
 
 echo "Built $APP_DIR"

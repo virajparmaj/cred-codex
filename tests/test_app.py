@@ -9,7 +9,15 @@ from pathlib import Path
 import pytest
 
 from credcodex import __main__ as main_mod
-from credcodex.app import derive_menu_sections, derive_title, format_menu_datetime, format_relative_countdown
+from credcodex.app import (
+    derive_menu_sections,
+    derive_title,
+    format_keepalive_status,
+    format_menu_datetime,
+    format_relative_countdown,
+    format_time_ago,
+)
+from credcodex.keepalive_state import KeepaliveState
 from credcodex.models import Confidence, FailureCategory, LimitInfo, ProviderState
 from credcodex.notifications import cleanup_notification_locks, read_lock_value, should_notify_once, write_lock
 
@@ -88,6 +96,38 @@ class TestMenuSections:
         assert "Credits: 12.5 credits" == sections.credits_title
         assert "Extra usage:" in sections.extra_title
         assert sections.has_any_info is True
+
+
+class TestKeepaliveFormatting:
+    def test_idle_when_never_fired_and_unarmed(self):
+        assert format_keepalive_status(KeepaliveState()) == "Keepalive: idle"
+
+    def test_armed_when_scheduled_but_never_fired(self):
+        scheduled = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=5)
+        snap = KeepaliveState().with_scheduled(scheduled)
+        assert format_keepalive_status(snap) == "Keepalive: armed"
+
+    def test_ok_status(self):
+        now = dt.datetime(2026, 4, 3, 12, 0, tzinfo=dt.timezone.utc)
+        fired = now - dt.timedelta(hours=2, minutes=15)
+        snap = KeepaliveState().with_fired(fired, "ok")
+        assert format_keepalive_status(snap, now=now) == "Keepalive: 2h 15m ago ✓"
+
+    def test_failed_status(self):
+        now = dt.datetime(2026, 4, 3, 12, 0, tzinfo=dt.timezone.utc)
+        fired = now - dt.timedelta(minutes=5)
+        snap = KeepaliveState().with_fired(fired, "failed")
+        assert format_keepalive_status(snap, now=now) == "Keepalive: 5m ago ✗ failed"
+
+    def test_skipped_status(self):
+        now = dt.datetime(2026, 4, 3, 12, 0, tzinfo=dt.timezone.utc)
+        fired = now - dt.timedelta(minutes=5)
+        snap = KeepaliveState().with_fired(fired, "skipped")
+        assert format_keepalive_status(snap, now=now) == "Keepalive: 5m ago — skipped"
+
+    def test_time_ago_just_now(self):
+        now = dt.datetime(2026, 4, 3, 12, 0, tzinfo=dt.timezone.utc)
+        assert format_time_ago(now - dt.timedelta(seconds=10), now=now) == "just now"
 
 
 class TestNotificationLocks:

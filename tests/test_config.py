@@ -62,6 +62,30 @@ class TestLoadConfig:
         loaded = config_mod.load_config()
         assert loaded == config_mod.DEFAULT_CONFIG
 
+    def test_keepalive_defaults(self, isolated_config):
+        loaded = config_mod.load_config()
+        assert loaded["keepalive_enabled"] is True
+        assert loaded["keepalive_wake_system_enabled"] is False
+        assert loaded["codex_bin"] is None
+
+
+class TestSanitizeKeepalive:
+    def test_flags_coerced_to_bool(self):
+        cfg = config_mod.sanitize_config(
+            {"keepalive_enabled": 0, "keepalive_wake_system_enabled": "yes"}
+        )
+        assert cfg["keepalive_enabled"] is False
+        assert cfg["keepalive_wake_system_enabled"] is True
+
+    def test_codex_bin_valid_string_preserved(self):
+        cfg = config_mod.sanitize_config({"codex_bin": "  /opt/homebrew/bin/codex  "})
+        assert cfg["codex_bin"] == "/opt/homebrew/bin/codex"
+
+    def test_codex_bin_invalid_resets_to_none(self):
+        assert config_mod.sanitize_config({"codex_bin": ""})["codex_bin"] is None
+        assert config_mod.sanitize_config({"codex_bin": 123})["codex_bin"] is None
+        assert config_mod.sanitize_config({"codex_bin": None})["codex_bin"] is None
+
 
 class TestSaveConfig:
     def test_round_trip(self, isolated_config):

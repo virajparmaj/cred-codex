@@ -11,6 +11,7 @@ from credcodex import __version__
 from credcodex.auth_launcher import ReauthGate, launch_codex_login
 from credcodex.config import (
     APP_NAME,
+    KEEPALIVE_STATE_PATH,
     MENU_OPEN_STALE_SEC,
     REAUTH_NOTIFICATION_LOCK,
     RESET_NOTIFICATION_LOCK,
@@ -18,6 +19,8 @@ from credcodex.config import (
     load_config,
 )
 from credcodex.icon_assets import menu_bar_icon_2x_path, menu_bar_icon_path, runtime_icon_path
+from credcodex.keepalive import KeepaliveScheduler
+from credcodex.keepalive_state import KeepaliveState
 from credcodex.limit_providers import CompositeLimitProvider
 from credcodex.models import FailureCategory, LimitInfo, ProviderState
 from credcodex.notifications import (
@@ -39,6 +42,7 @@ try:
         NSBundle,
         NSImage,
         NSObject,
+        NSWorkspace,
     )
     from Foundation import NSProcessInfo
 except Exception:  # pragma: no cover - exercised only on non-macOS test paths.
@@ -50,6 +54,7 @@ except Exception:  # pragma: no cover - exercised only on non-macOS test paths.
     NSImage = None
     NSObject = object
     NSProcessInfo = None
+    NSWorkspace = None
 
 
 def format_relative_countdown(target: datetime | None, now: datetime | None = None) -> str:
@@ -78,6 +83,42 @@ def format_menu_datetime(target: datetime | None) -> str:
     localized = target.astimezone()
     hour = localized.strftime("%I").lstrip("0") or "0"
     return f"{localized.strftime('%b')} {localized.day}, {hour}:{localized.strftime('%M %p')}"
+
+
+def format_time_ago(target: datetime | None, now: datetime | None = None) -> str:
+    """Render a past datetime as 'Xh Ym ago' / 'Xm ago' / 'just now'."""
+    if target is None:
+        return "--"
+    current = now or datetime.now(timezone.utc).astimezone()
+    total_sec = int((current - target).total_seconds())
+    if total_sec < 45:
+        return "just now"
+    if total_sec < 3600:
+        return f"{total_sec // 60}m ago"
+    hours, rem = divmod(total_sec, 3600)
+    minutes = rem // 60
+    if hours >= 24:
+        return f"{hours // 24}d ago"
+    return f"{hours}h {minutes}m ago" if minutes else f"{hours}h ago"
+
+
+def format_keepalive_status(snapshot: KeepaliveState, now: datetime | None = None) -> str:
+    """Format keepalive state for the menu-bar dropdown.
+
+    Examples: 'Keepalive: 2h 15m ago ✓', 'Keepalive: 5m ago ✗ failed',
+    'Keepalive: armed', 'Keepalive: idle'.
+    """
+    if snapshot.last_fired_at is None:
+        if snapshot.scheduled_fire_at is not None:
+            return "Keepalive: armed"
+        return "Keepalive: idle"
+    ago = format_time_ago(snapshot.last_fired_at, now=now)
+    status = snapshot.last_status or ""
+    if status == "ok":
+        return f"Keepalive: {ago} ✓"
+    if status == "skipped":
+        return f"Keepalive: {ago} — skipped"
+    return f"Keepalive: {ago} ✗ {status or 'failed'}"
 
 
 def make_bar(percent_used: float | None, width: int = 15) -> str:
@@ -186,6 +227,18 @@ if objc is not None:
                 app._refresh_now(None)
 
 
+    class _WakeObserver(NSObject):
+        """Receives NSWorkspaceDidWakeNotification from macOS."""
+
+        app_ref = objc.ivar()
+
+        def workspaceDidWake_(self, _notification):
+            app = self.app_ref
+            if app is None:
+                return
+            app._handle_wake()
+
+
 if rumps is None:  # pragma: no cover - macOS-only execution path.
     class CredCodexApp:
         """Fallback stub when macOS UI dependencies are unavailable."""
@@ -227,6 +280,12 @@ else:
             self._last_limit: LimitInfo | None = None
             self._last_refresh_time = 0.0
 
+            self._keepalive_scheduler = KeepaliveScheduler(state_path=KEEPALIVE_STATE_PATH)
+            self._keepalive_scheduler.set_wake_system_enabled(
+                bool(self.config.get("keepalive_wake_system_enabled", False))
+            )
+            self._keepalive_scheduler.set_codex_bin(self.config.get("codex_bin"))
+
             cleanup_notification_locks()
 
             noop = lambda _: None
@@ -235,6 +294,8 @@ else:
             self._weekly_reset_item = rumps.MenuItem("  Resets: --", callback=noop)
             self._credits_item = rumps.MenuItem("Credits: --", callback=noop)
             self._extra_item = rumps.MenuItem("Extra usage: --", callback=noop)
+            self._keepalive_status_item = rumps.MenuItem("Keepalive: --", callback=noop)
+            self._keepalive_next_item = rumps.MenuItem("  Next: --", callback=noop)
             self._info_separator = rumps.MenuItem("")
             self.menu = [
                 self._plan_item,
@@ -242,6 +303,8 @@ else:
                 self._weekly_reset_item,
                 self._credits_item,
                 self._extra_item,
+                self._keepalive_status_item,
+                self._keepalive_next_item,
                 self._info_separator,
                 rumps.MenuItem("Refresh", callback=self._refresh_now),
                 rumps.MenuItem("Re-authenticate", callback=self._reauth_now),
@@ -259,13 +322,24 @@ else:
                 info_menu.insertItem_atIndex_(real_separator, index)
                 self._info_separator._menuitem = real_separator
 
-            self._set_info_visibility(MenuSections())
+            self._set_info_visibility(MenuSections(), keepalive_visible=False)
 
             self._menu_delegate = _MenuDelegate.alloc().init()
             self._menu_delegate.app_ref = self
             ns_menu = getattr(self._menu, "_menu", None)
             if ns_menu is not None:
                 ns_menu.setDelegate_(self._menu_delegate)
+
+            # Register for macOS wake events so sleep doesn't break the keepalive.
+            self._wake_observer = _WakeObserver.alloc().init()
+            self._wake_observer.app_ref = self
+            if NSWorkspace is not None:
+                NSWorkspace.sharedWorkspace().notificationCenter().addObserver_selector_name_object_(
+                    self._wake_observer,
+                    objc.selector(self._wake_observer.workspaceDidWake_, signature=b"v@:@"),
+                    "NSWorkspaceDidWakeNotification",
+                    None,
+                )
 
             self._startup_timer = rumps.Timer(self._startup_update, 1)
             self._startup_timer.start()
@@ -318,20 +392,25 @@ else:
             except AttributeError:
                 pass
 
-        def _set_info_visibility(self, sections: MenuSections) -> None:
+        def _set_info_visibility(self, sections: MenuSections, keepalive_visible: bool) -> None:
             self._plan_item._menuitem.setHidden_(sections.plan_title is None)
             self._weekly_item._menuitem.setHidden_(sections.weekly_title is None)
             self._weekly_reset_item._menuitem.setHidden_(sections.weekly_reset_title is None)
             self._credits_item._menuitem.setHidden_(sections.credits_title is None)
             self._extra_item._menuitem.setHidden_(sections.extra_title is None)
-            self._info_separator._menuitem.setHidden_(not sections.has_any_info)
+            self._keepalive_status_item._menuitem.setHidden_(not keepalive_visible)
+            self._keepalive_next_item._menuitem.setHidden_(not keepalive_visible)
+            self._info_separator._menuitem.setHidden_(
+                not (sections.has_any_info or keepalive_visible)
+            )
 
         def _startup_update(self, sender) -> None:
             sender.stop()
             if self._provider.try_snapshot_startup():
                 self._apply_limit(self._provider.get_limit_info())
-                return
-            self._update()
+            else:
+                self._update()
+            self._startup_keepalive_catchup()
 
         def _tick(self, _sender) -> None:
             self.config = load_config()
@@ -362,11 +441,23 @@ else:
             if sections.extra_title:
                 self._extra_item.title = sections.extra_title
 
-            self._set_info_visibility(sections)
+            keepalive_visible = bool(self.config.get("keepalive_enabled", True))
+            if keepalive_visible:
+                snapshot = self._keepalive_scheduler.status_snapshot()
+                self._keepalive_status_item.title = format_keepalive_status(snapshot)
+                if snapshot.scheduled_fire_at is not None:
+                    self._keepalive_next_item.title = (
+                        f"  Next: {format_relative_countdown(snapshot.scheduled_fire_at)}"
+                    )
+                else:
+                    self._keepalive_next_item.title = "  Next: --"
+
+            self._set_info_visibility(sections, keepalive_visible=keepalive_visible)
             self._last_limit = limit
             self._last_refresh_time = time.monotonic()
             self._maybe_notify_reset_available(previous, limit)
             self._maybe_auto_reauth(limit)
+            self._maybe_schedule_keepalive(limit)
 
         def _maybe_notify_reset_available(self, previous: LimitInfo | None, current: LimitInfo) -> None:
             now = datetime.now(timezone.utc).astimezone()
@@ -388,6 +479,33 @@ else:
             if not self._reauth_gate.eligible_for_auto_launch(limit.error, category=limit.failure_category):
                 return
             self._trigger_reauth(auto=True, reason="provider requested re-auth")
+
+        def _maybe_schedule_keepalive(self, limit: LimitInfo) -> None:
+            """Schedule or cancel the post-reset keepalive ping."""
+            if not self.config.get("keepalive_enabled", True):
+                self._keepalive_scheduler.cancel()
+                return
+            if limit.resets_at is not None:
+                self._keepalive_scheduler.schedule(limit.resets_at)
+            else:
+                self._keepalive_scheduler.cancel()
+
+        def _startup_keepalive_catchup(self) -> None:
+            """On launch, fire a ping if a scheduled firing was missed while off."""
+            if not self.config.get("keepalive_enabled", True):
+                return
+            resets = self._last_limit.resets_at if self._last_limit is not None else None
+            self._keepalive_scheduler.catch_up_if_needed(resets)
+
+        def _handle_wake(self) -> None:
+            """Wake-from-sleep handler: catch up any missed ping and reschedule."""
+            if not self.config.get("keepalive_enabled", True):
+                return
+            resets = self._last_limit.resets_at if self._last_limit is not None else None
+            logger.info("System wake detected — re-evaluating keepalive.")
+            self._keepalive_scheduler.handle_wake(resets)
+            # Force a refresh so resets_at doesn't stay stale.
+            self._refresh_now(None)
 
         def _trigger_reauth(self, auto: bool, reason: str) -> None:
             self._reauth_gate.mark_attempt()
@@ -429,6 +547,16 @@ else:
                 self._refresh_timer = rumps.Timer(self._tick, next_interval)
                 if next_auto:
                     self._refresh_timer.start()
+
+            self._keepalive_scheduler.set_wake_system_enabled(
+                bool(config.get("keepalive_wake_system_enabled", False))
+            )
+            self._keepalive_scheduler.set_codex_bin(config.get("codex_bin"))
+            resets = self._last_limit.resets_at if self._last_limit is not None else None
+            if not config.get("keepalive_enabled", True):
+                self._keepalive_scheduler.cancel()
+            elif resets is not None:
+                self._keepalive_scheduler.schedule(resets)
 
         def _reauth_cooldown_sec(self) -> int:
             return clamp_reauth_cooldown(self.config.get("auto_reauth_cooldown_sec", 1800))
